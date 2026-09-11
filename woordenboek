@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embedded Dropbox Link</title>
+    <style>
+        /* Verwijder alle standaard marges en scrollbars van de pagina */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* Voorkomt dubbele scrollbalken */
+        }
+
+        /* Maak het iframe schermvullend */
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none; /* Verwijder de rand om de iframe */
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Vervang de src URL met jouw eigen Dropbox link en pas dl=0 aan naar raw=1 -->
+    <iframe src="https://www.dropbox.com/scl/fi/64kqdpjnsajyrv4urkiku/Woordenboek-DU-NL.pdf?rlkey=otp3pye0owfx2pbp689nyyioq&st=lmnlvliv&raw=1" allow="fullscreen"></iframe>
+
+</body>
+</html>
