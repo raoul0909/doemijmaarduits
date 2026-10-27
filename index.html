@@ -1,32 +1,303 @@
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Embedded Dropbox Link</title>
-    <style>
-        /* Verwijder alle standaard marges en scrollbars van de pagina */
-        html, body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden; /* Voorkomt dubbele scrollbalken */
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spellingsbalk met Suggesties</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
 
-        /* Maak het iframe schermvullend */
-        iframe {
-            width: 100%;
-            height: 100%;
-            border: none; /* Verwijder de rand om de iframe */
-            display: block;
-        }
-    </style>
+    body {
+      background: transparent;
+      padding: 6px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .container {
+      position: relative;
+      width: 100%;
+      max-width: 500px;
+    }
+
+    .editor-box {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 14px;
+      font-size: 16px;
+      line-height: 24px;
+      border: 2px solid #cbd5e1;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #0f172a;
+      outline: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .editor-box:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    }
+
+    .editor-box:empty:before {
+      content: attr(placeholder);
+      color: #94a3b8;
+      pointer-events: none;
+      display: block;
+    }
+
+    /* Rode golvende onderstreping voor foute woorden */
+    .spelling-error {
+      text-decoration: underline wavy #ef4444 2px;
+      text-underline-offset: 3px;
+      cursor: pointer;
+      background-color: rgba(239, 68, 68, 0.05);
+      border-radius: 3px;
+    }
+
+    /* Popover menu met suggesties */
+    .suggestion-menu {
+      position: absolute;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      padding: 4px;
+      z-index: 100;
+      display: none;
+      min-width: 120px;
+    }
+
+    .suggestion-item {
+      padding: 6px 12px;
+      font-size: 14px;
+      color: #1e293b;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.15s;
+    }
+
+    .suggestion-item:hover {
+      background: #eff6ff;
+      color: #2563eb;
+    }
+
+    .suggestion-item.geen-suggestie {
+      color: #94a3b8;
+      cursor: default;
+      font-style: italic;
+    }
+  </style>
 </head>
 <body>
 
-    <!-- Vervang de src URL met jouw eigen Dropbox link en pas dl=0 aan naar raw=1 -->
-    <iframe src="https://www.dropbox.com/scl/fi/64kqdpjnsajyrv4urkiku/Woordenboek-DU-NL.pdf?rlkey=otp3pye0owfx2pbp689nyyioq&st=lmnlvliv&raw=1" allow="fullscreen"></iframe>
+<div class="container">
+  <div 
+    id="editor" 
+    class="editor-box" 
+    contenteditable="true" 
+    placeholder="Typ hier een woord of zin..."
+    spellcheck="false"
+  ></div>
+  
+  <!-- Popover menu voor suggesties -->
+  <div id="suggestionMenu" class="suggestion-menu"></div>
+</div>
+
+<script>
+  const editor = document.getElementById('editor');
+  const suggestionMenu = document.getElementById('suggestionMenu');
+  let timeout = null;
+  let currentMatches = [];
+
+  document.addEventListener('click', (e) => {
+    if (!editor.contains(e.target) && !suggestionMenu.contains(e.target)) {
+      hideSuggestions();
+    }
+  });
+
+  function hideSuggestions() {
+    suggestionMenu.style.display = 'none';
+  }
+
+  async function checkSpelling() {
+    const text = editor.innerText;
+    if (!text.trim()) {
+      currentMatches = [];
+      hideSuggestions();
+      return;
+    }
+
+    try {
+      const response = await fetch('https://api.languagetool.org/v2/check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          text: text,
+          language: 'nl'
+        })
+      });
+
+      const data = await response.json();
+      
+      // FILTER: Negeer hoofdletter-meldingen aan het begin van een zin (zoals bij losse woorden)
+      const pureSpellingMatches = (data.matches || []).filter(match => {
+        if (match.rule && match.rule.id === 'UPPERCASE_SENTENCE_START') {
+          return false;
+        }
+        return true;
+      });
+
+      currentMatches = pureSpellingMatches;
+      markErrors(currentMatches);
+    } catch (err) {
+      console.error('Fout bij ophalen spelling:', err);
+    }
+  }
+
+  function markErrors(matches) {
+    const text = editor.innerText;
+    if (!matches || matches.length === 0) {
+      saveCaretAndSetText(text, []);
+      hideSuggestions();
+      return;
+    }
+
+    saveCaretAndSetText(text, matches);
+  }
+
+  function saveCaretAndSetText(text, matches) {
+    const selection = window.getSelection();
+    let offset = 0;
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      const preCaretRange = range.cloneRange();
+      preCaretRange.selectNodeContents(editor);
+      preCaretRange.setEnd(range.endContainer, range.endOffset);
+      offset = preCaretRange.toString().length;
+    }
+
+    matches.sort((a, b) => b.offset - a.offset);
+
+    let formattedText = text;
+    matches.forEach((match, index) => {
+      const originalIndex = matches.length - 1 - index;
+      const start = match.offset;
+      const end = match.offset + match.length;
+      const wrongWord = formattedText.slice(start, end);
+
+      formattedText = formattedText.slice(0, start) + 
+                      `<span class="spelling-error" data-match-index="${originalIndex}">${wrongWord}</span>` + 
+                      formattedText.slice(end);
+    });
+
+    editor.innerHTML = formattedText;
+    restoreCaret(offset);
+  }
+
+  function restoreCaret(targetOffset) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    let currentLen = 0;
+    let nodeToSelect = null;
+    let nodeOffset = 0;
+
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const len = node.nodeValue.length;
+        if (currentLen + len >= targetOffset) {
+          nodeToSelect = node;
+          nodeOffset = targetOffset - currentLen;
+          return true;
+        }
+        currentLen += len;
+      } else {
+        for (let child of node.childNodes) {
+          if (walk(child)) return true;
+        }
+      }
+      return false;
+    }
+
+    walk(editor);
+
+    if (nodeToSelect) {
+      range.setStart(nodeToSelect, nodeOffset);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }
+
+  editor.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target.classList.contains('spelling-error')) {
+      const matchIndex = target.getAttribute('data-match-index');
+      const match = currentMatches[matchIndex];
+      
+      if (match && match.replacements) {
+        showSuggestions(target, match);
+      }
+    } else {
+      hideSuggestions();
+    }
+  });
+
+  function showSuggestions(element, match) {
+    suggestionMenu.innerHTML = '';
+    const replacements = match.replacements.slice(0, 4);
+
+    if (replacements.length === 0) {
+      const div = document.createElement('div');
+      div.className = 'suggestion-item geen-suggestie';
+      div.textContent = 'Geen suggesties';
+      suggestionMenu.appendChild(div);
+    } else {
+      replacements.forEach(rep => {
+        const item = document.createElement('div');
+        item.className = 'suggestion-item';
+        item.textContent = rep.value;
+        
+        item.addEventListener('click', () => {
+          replaceWord(match.offset, match.length, rep.value);
+          hideSuggestions();
+        });
+
+        suggestionMenu.appendChild(item);
+      });
+    }
+
+    const rect = element.getBoundingClientRect();
+    const containerRect = editor.getBoundingClientRect();
+
+    suggestionMenu.style.top = (rect.bottom - containerRect.top + 6) + 'px';
+    suggestionMenu.style.left = (rect.left - containerRect.left) + 'px';
+    suggestionMenu.style.display = 'block';
+  }
+
+  function replaceWord(offset, length, newWord) {
+    let text = editor.innerText;
+    text = text.slice(0, offset) + newWord + text.slice(offset + length);
+    editor.innerText = text;
+    checkSpelling();
+  }
+
+  editor.addEventListener('input', () => {
+    hideSuggestions();
+    clearTimeout(timeout);
+    timeout = setTimeout(checkSpelling, 500);
+  });
+</script>
 
 </body>
 </html>
